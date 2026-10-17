@@ -62,7 +62,8 @@ def save(path: Path, candles: list[Candle]) -> int:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDS)
+        # "\n" instead of the csv default "\r\n": same file on Windows and in CI, clean diffs
+        writer = csv.DictWriter(f, fieldnames=FIELDS, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows[key] for key in sorted(rows))
     return len(rows) - before

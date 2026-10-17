@@ -44,5 +44,12 @@ def test_load_filters_by_pair(tmp_path):
     assert len(storage.load(path)) == 6
 
 
+def test_csv_uses_unix_line_endings(tmp_path):
+    path = tmp_path / "daily.csv"
+    storage.save(path, candles())
+
+    assert b"\r" not in path.read_bytes()
+
+
 def test_load_missing_file(tmp_path):
     assert storage.load(tmp_path / "nope.csv") == []
