@@ -1,7 +1,7 @@
 # kraken-tracker
 
-[![CI](https://github.com/YOUR_USERNAME/kraken-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/kraken-tracker/actions/workflows/ci.yml)
-[![Update data](https://github.com/YOUR_USERNAME/kraken-tracker/actions/workflows/update.yml/badge.svg)](https://github.com/YOUR_USERNAME/kraken-tracker/actions/workflows/update.yml)
+[![CI](https://github.com/born2feel/kraken-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/born2feel/kraken-tracker/actions/workflows/ci.yml)
+[![Update data](https://github.com/born2feel/kraken-tracker/actions/workflows/update.yml/badge.svg)](https://github.com/born2feel/kraken-tracker/actions/workflows/update.yml)
 ![Python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-blue)
 
 A command-line tool that pulls crypto market data from the
@@ -24,7 +24,7 @@ the dataset in [`data/`](data) every day, so the chart below is always fresh.
 ## Quick start
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/kraken-tracker.git
+git clone https://github.com/born2feel/kraken-tracker.git
 cd kraken-tracker
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
