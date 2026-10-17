@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cbr-rates"
+name = "kraken-tracker"
 version = "1.0.0"
-description = "Fetch, store and plot official exchange rates of the Central Bank of Russia"
+description = "Fetch, store and plot crypto market data from the Kraken exchange"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -18,10 +18,10 @@ dependencies = [
 dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
-cbr-rates = "cbr_rates.cli:main"
+kraken-tracker = "kraken_tracker.cli:main"
 
 [tool.setuptools]
-packages = ["cbr_rates"]
+packages = ["kraken_tracker"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

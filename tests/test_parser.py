@@ -1,53 +1,59 @@
-from datetime import date
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 
-from cbr_rates.parser import ParseError, parse_daily, parse_dynamic
+from kraken_tracker.parser import KrakenError, check_errors, parse_ohlc, parse_ticker
+
+from .conftest import OHLC_ETH, TICKER_BTC, TICKER_DOGE, UNKNOWN_PAIR
 
 
-def test_parse_daily_reads_all_currencies(daily_xml):
-    rates = parse_daily(daily_xml)
+def test_parse_ticker_ignores_legacy_pair_name():
+    t = parse_ticker(TICKER_BTC, "BTC/USD")
 
-    assert [r.code for r in rates] == ["USD", "EUR", "CNY", "NOK"]
-    usd = rates[0]
-    assert usd.date == date(2026, 10, 17)
-    assert usd.cbr_id == "R01235"
-    assert usd.name == "Доллар США"  # windows-1251 decoded correctly
-    assert usd.value == Decimal("81.5432")  # comma decimal separator
-
-
-def test_unit_rate_divides_by_nominal(daily_xml):
-    nok = parse_daily(daily_xml)[-1]
-
-    assert nok.nominal == 10
-    assert nok.unit_rate == Decimal("7.5817")
+    assert t.pair == "BTC/USD"
+    assert t.last == Decimal("81433.70000")
+    assert t.spread == Decimal("0.1")
+    # 24h values are the second element of each pair
+    assert t.low_24h == Decimal("80705.40000")
+    assert t.high_24h == Decimal("82376.20000")
 
 
-def test_parse_dynamic_sorts_by_date(dynamic_xml):
-    points = parse_dynamic(dynamic_xml)
+def test_change_pct_is_relative_to_todays_open():
+    assert parse_ticker(TICKER_BTC, "BTC/USD").change_pct == Decimal("-0.08")
+    assert parse_ticker(TICKER_DOGE, "DOGE/USD").change_pct == Decimal("-0.99")
 
-    assert [p.date.day for p in points] == [14, 15, 16]
-    assert points[-1].unit_rate == Decimal("81.2000")
+
+def test_parse_ohlc_marks_open_candle():
+    candles = parse_ohlc(OHLC_ETH, "ETH/USD")
+
+    assert len(candles) == 3
+    assert candles[0].time == datetime(2026, 10, 15, tzinfo=UTC)
+    assert candles[1].close == Decimal("2420.22")
+    assert candles[1].trades == 53485
+    assert [c.closed for c in candles] == [True, True, False]
+
+
+def test_check_errors_raises_api_error():
+    with pytest.raises(KrakenError, match="Unknown asset pair"):
+        check_errors(UNKNOWN_PAIR)
 
 
 @pytest.mark.parametrize(
-    "xml",
+    "payload",
     [
-        b"not xml at all",
-        b"<html><body>Service unavailable</body></html>",
-        b"<ValCurs><Valute ID='R1'><CharCode>USD</CharCode></Valute></ValCurs>",
+        None,
+        {"error": []},  # no result
+        {"error": [], "result": {"A": {}, "B": {}}},  # more than one pair
+        {"error": [], "result": {"XXBTZUSD": {"c": ["abc"]}}},  # missing fields
     ],
 )
-def test_parse_daily_rejects_bad_documents(xml):
-    with pytest.raises(ParseError):
-        parse_daily(xml)
+def test_parse_ticker_rejects_unexpected_shapes(payload):
+    with pytest.raises(KrakenError):
+        parse_ticker(payload, "BTC/USD")
 
 
-def test_parse_daily_rejects_bad_number():
-    xml = (
-        b'<ValCurs Date="17.10.2026"><Valute ID="R1"><CharCode>USD</CharCode>'
-        b"<Name>X</Name><Nominal>1</Nominal><Value>n/a</Value></Valute></ValCurs>"
-    )
-    with pytest.raises(ParseError, match="bad number"):
-        parse_daily(xml)
+def test_parse_ohlc_rejects_bad_number():
+    payload = {"error": [], "result": {"X": [[1, "1", "2", "0.5", "n/a", "1", "1", 1]]}}
+    with pytest.raises(KrakenError, match="bad number"):
+        parse_ohlc(payload, "X")

@@ -1,71 +1,87 @@
-from datetime import date
+from datetime import UTC, datetime
 
 import pytest
 import requests
 
-from cbr_rates.client import (
-    CBR_DAILY_URL,
-    CBR_DYNAMIC_URL,
-    MIRROR_DAILY_URL,
-    CbrClient,
-    CbrError,
-)
+from kraken_tracker.client import KrakenClient
+from kraken_tracker.parser import KrakenError
 
-from .conftest import FakeResponse, FakeSession
+from .conftest import RATE_LIMIT, TICKER_BTC, FakeResponse, FakeSession
 
 
-def test_daily_sends_date_in_cbr_format(daily_xml):
-    session = FakeSession({CBR_DAILY_URL: FakeResponse(daily_xml)})
+def make_client(session):
+    delays = []
+    return KrakenClient(session, sleep=delays.append), delays
 
-    CbrClient(session).daily(date(2026, 10, 5))
 
-    assert session.calls == [(CBR_DAILY_URL, {"date_req": "05/10/2026"})]
+def test_ticker_sends_normalized_pair(session):
+    client, _ = make_client(session)
+
+    t = client.ticker("btc/usd")
+
+    assert t.pair == "BTC/USD"
+    assert session.calls == [("Ticker", {"pair": "BTCUSD"})]
     assert "User-Agent" in session.headers
 
 
-def test_daily_falls_back_to_mirror(daily_xml):
-    session = FakeSession(
-        {
-            CBR_DAILY_URL: requests.ConnectionError("timeout"),
-            MIRROR_DAILY_URL: FakeResponse(daily_xml),
-        }
-    )
+def test_ohlc_passes_interval_and_since(session):
+    client, _ = make_client(session)
 
-    rates = CbrClient(session).daily()
+    client.ohlc("ETH/USD", 1440, since=datetime(2026, 10, 1, tzinfo=UTC))
 
-    assert len(rates) == 4
-    assert [url for url, _ in session.calls] == [CBR_DAILY_URL, MIRROR_DAILY_URL]
+    assert session.calls == [("OHLC", {"pair": "ETHUSD", "interval": 1440, "since": 1790812800})]
 
 
-def test_no_fallback_for_past_dates():
-    # The mirror only knows today's rates, returning them for a past date would be wrong.
-    session = FakeSession({CBR_DAILY_URL: FakeResponse(status=503)})
+def test_unknown_pair_is_not_retried_and_names_the_pair(session):
+    client, delays = make_client(session)
 
-    with pytest.raises(CbrError):
-        CbrClient(session).daily(date(2026, 1, 15))
+    with pytest.raises(KrakenError, match="NOPE/USD: EQuery:Unknown asset pair"):
+        client.ticker("NOPE/USD")
 
     assert len(session.calls) == 1
+    assert delays == []
 
 
-def test_history_resolves_currency_id(daily_xml, dynamic_xml):
-    session = FakeSession(
-        {CBR_DAILY_URL: FakeResponse(daily_xml), CBR_DYNAMIC_URL: FakeResponse(dynamic_xml)}
-    )
+@pytest.mark.parametrize(
+    "failure",
+    [
+        FakeResponse(RATE_LIMIT),
+        FakeResponse(status=502),
+        requests.ConnectionError("connection reset"),
+    ],
+)
+def test_temporary_failures_are_retried_with_backoff(failure):
+    session = FakeSession({("Ticker", "BTCUSD"): [failure, failure, FakeResponse(TICKER_BTC)]})
+    client, delays = make_client(session)
 
-    points = CbrClient(session).history("usd", date(2026, 10, 14), date(2026, 10, 16))
-
-    assert len(points) == 3
-    _, params = session.calls[-1]
-    assert params == {"date_req1": "14/10/2026", "date_req2": "16/10/2026", "VAL_NM_RQ": "R01235"}
-
-
-def test_history_unknown_code(daily_xml):
-    session = FakeSession({CBR_DAILY_URL: FakeResponse(daily_xml)})
-
-    with pytest.raises(CbrError, match="unknown currency"):
-        CbrClient(session).history("XXX", date(2026, 10, 1), date(2026, 10, 2))
+    assert client.ticker("BTC/USD").pair == "BTC/USD"
+    assert delays == [1, 2]
 
 
-def test_history_rejects_reversed_range():
-    with pytest.raises(ValueError):
-        CbrClient(FakeSession({})).history("USD", date(2026, 10, 2), date(2026, 10, 1))
+def test_gives_up_after_all_retries():
+    session = FakeSession({("Ticker", "BTCUSD"): [FakeResponse(status=503)]})
+    client, delays = make_client(session)
+
+    with pytest.raises(KrakenError, match="BTC/USD: Ticker request failed"):
+        client.ticker("BTC/USD")
+
+    assert len(session.calls) == 3
+    assert delays == [1, 2]
+
+
+def test_client_error_is_not_retried():
+    session = FakeSession({("Ticker", "BTCUSD"): [FakeResponse(status=404)]})
+    client, delays = make_client(session)
+
+    with pytest.raises(KrakenError):
+        client.ticker("BTC/USD")
+
+    assert delays == []
+
+
+def test_invalid_json_is_reported():
+    session = FakeSession({("Ticker", "BTCUSD"): [FakeResponse(ValueError("not json"))]})
+    client, _ = make_client(session)
+
+    with pytest.raises(KrakenError, match="not json"):
+        client.ticker("BTC/USD")

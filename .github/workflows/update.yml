@@ -1,10 +1,10 @@
-name: Update rates
+name: Update data
 
-# Every day the bot fetches fresh rates and commits them to data/,
-# so the repository itself becomes a growing dataset with a live chart.
+# Every day the bot fetches fresh candles and commits them to data/,
+# so the repository itself is a growing dataset with a live chart in the README.
 on:
   schedule:
-    - cron: "30 13 * * *" # 16:30 Moscow time; CBR publishes rates for the next day by ~15:30
+    - cron: "15 0 * * *" # 00:15 UTC, right after the daily candle closes
   workflow_dispatch: # allows a manual run from the Actions tab
 
 permissions:
@@ -20,12 +20,12 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: pip install -e .
-      - run: python -m cbr_rates update --codes USD,EUR,CNY
-      - run: python -m cbr_rates plot USD --from-csv data/rates.csv -o data/usd.png
+      - run: python -m kraken_tracker update --pairs BTC/USD,ETH/USD,SOL/USD
+      - run: python -m kraken_tracker plot BTC/USD --from-csv data/daily.csv --days 365 -o data/btc-usd.png
       - name: Commit changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/
-          git diff --cached --quiet || git commit -m "data: rates for $(date -u +%F)"
+          git diff --cached --quiet || git commit -m "data: candles for $(date -u +%F)"
           git push

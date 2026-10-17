@@ -1,42 +1,47 @@
 from dataclasses import replace
-from datetime import date
 from decimal import Decimal
 
-from cbr_rates import storage
-from cbr_rates.parser import parse_daily
+from kraken_tracker import storage
+from kraken_tracker.parser import parse_ohlc
+
+from .conftest import OHLC_ETH
 
 
-def test_save_creates_file_and_dirs(tmp_path, daily_xml):
-    path = tmp_path / "data" / "rates.csv"
-
-    added = storage.save(path, parse_daily(daily_xml))
-
-    assert added == 4
-    rows = storage.load(path)
-    assert rows[0].keys() == set(storage.FIELDS)
-    assert {r["code"] for r in rows} == {"USD", "EUR", "CNY", "NOK"}
+def candles():
+    return parse_ohlc(OHLC_ETH, "ETH/USD")
 
 
-def test_save_twice_does_not_duplicate(tmp_path, daily_xml):
-    path = tmp_path / "rates.csv"
-    rates = parse_daily(daily_xml)
-    storage.save(path, rates)
+def test_save_and_load_roundtrip(tmp_path):
+    path = tmp_path / "data" / "daily.csv"
 
-    # Same day again, e.g. the scheduled job ran twice; the value may be corrected.
-    usd = replace(rates[0], value=Decimal("82.0000"))
-    added = storage.save(path, [usd])
+    added = storage.save(path, candles())
 
+    assert added == 3
+    assert storage.load(path) == candles()
+
+
+def test_open_candle_is_overwritten_not_duplicated(tmp_path):
+    path = tmp_path / "daily.csv"
+    storage.save(path, candles())
+
+    # Next day the same candle comes back closed with final values.
+    final = replace(candles()[-1], close=Decimal("2450.00"), closed=True)
+    added = storage.save(path, [final])
+
+    loaded = storage.load(path)
     assert added == 0
-    assert len(storage.load(path)) == 4
-    assert storage.series(path, "USD") == [(date(2026, 10, 17), Decimal("82.0000"))]
+    assert len(loaded) == 3
+    assert loaded[-1].close == Decimal("2450.00")
+    assert loaded[-1].closed
 
 
-def test_series_is_sorted_by_date(tmp_path, daily_xml):
-    path = tmp_path / "rates.csv"
-    usd = parse_daily(daily_xml)[0]
-    storage.save(path, [replace(usd, date=date(2026, 10, 20)), usd])
+def test_load_filters_by_pair(tmp_path):
+    path = tmp_path / "daily.csv"
+    btc = [replace(c, pair="BTC/USD") for c in candles()]
+    storage.save(path, candles() + btc)
 
-    assert [d.day for d, _ in storage.series(path, "usd")] == [17, 20]
+    assert {c.pair for c in storage.load(path, "BTC/USD")} == {"BTC/USD"}
+    assert len(storage.load(path)) == 6
 
 
 def test_load_missing_file(tmp_path):

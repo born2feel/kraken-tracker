@@ -1,80 +1,97 @@
-# cbr-rates
+# kraken-tracker
 
-[![CI](https://github.com/YOUR_USERNAME/cbr-rates/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/cbr-rates/actions/workflows/ci.yml)
-[![Update rates](https://github.com/YOUR_USERNAME/cbr-rates/actions/workflows/update.yml/badge.svg)](https://github.com/YOUR_USERNAME/cbr-rates/actions/workflows/update.yml)
+[![CI](https://github.com/YOUR_USERNAME/kraken-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/kraken-tracker/actions/workflows/ci.yml)
+[![Update data](https://github.com/YOUR_USERNAME/kraken-tracker/actions/workflows/update.yml/badge.svg)](https://github.com/YOUR_USERNAME/kraken-tracker/actions/workflows/update.yml)
 ![Python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-blue)
 
-A command-line tool that fetches official exchange rates from the
-[Central Bank of Russia API](https://www.cbr.ru/development/SXML/), stores them in CSV
-and draws charts. A scheduled GitHub Actions job updates the dataset in this repository
-every day.
+A command-line tool that pulls crypto market data from the
+[Kraken exchange public API](https://docs.kraken.com/api/docs/rest-api/get-ticker-information),
+stores daily candles in CSV and draws charts. A scheduled GitHub Actions job updates
+the dataset in [`data/`](data) every day, so the chart below is always fresh.
 
-![USD/RUB chart](data/usd.png)
+![BTC/USD chart](data/btc-usd.png)
 
 ## Features
 
-- Rates of all currencies for today or any past date
-- History of one currency over a period
-- Incremental CSV storage: safe to run any number of times, no duplicate rows
-- PNG charts, from the API or from the collected data
-- Fallback to a mirror when `cbr.ru` is unreachable
-- Daily auto-update via GitHub Actions; the data and chart in `data/` are refreshed by a bot
-- Tests that never hit the network, CI on Python 3.11–3.13, linting with ruff
+- Live prices for any Kraken pair: last price, change since 00:00 UTC, 24h range and volume
+- OHLC candles from 1 minute to 15 days
+- Incremental CSV storage keyed by (pair, time): no duplicates, safe to re-run
+- Price + volume charts, from the API or from the collected data
+- Retries with exponential backoff on rate limits, 5xx errors and network failures
+- Daily auto-update via GitHub Actions
+- 40 tests that never touch the network, CI on Python 3.11–3.13, linting with ruff
 
 ## Quick start
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/cbr-rates.git
-cd cbr-rates
+git clone https://github.com/YOUR_USERNAME/kraken-tracker.git
+cd kraken-tracker
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e .
 ```
 
+No API key is needed: market data endpoints are public.
+
 ## Usage
 
 ```bash
-# Today's rates (all currencies or selected ones)
-python -m cbr_rates rates --codes USD,EUR,CNY
-
-# Rates on a specific date
-python -m cbr_rates rates --date 2025-01-15 --codes USD
-
-# Daily history of one currency
-python -m cbr_rates history EUR --from 2026-09-01 --to 2026-09-30
-
-# Append today's rates to data/rates.csv
-python -m cbr_rates update --codes USD,EUR,CNY
-
-# Chart for the last 180 days
-python -m cbr_rates plot USD --days 180 -o usd.png
+python -m kraken_tracker price BTC/USD ETH/USD doge-usd
 ```
 
-After `pip install -e .`, the same commands are available as `cbr-rates <command>`.
+```
+PAIR                 LAST    TODAY        24H LOW       24H HIGH          24H VOL
+BTC/USD         81,442.80   -0.07%      80,705.40      82,376.20         1,565.02
+ETH/USD          2,428.50   +0.34%       2,390.35       2,477.22        28,180.35
+DOGE/USD         0.080007   -0.99%       0.079263       0.082310    24,746,980.53
+```
+
+```bash
+python -m kraken_tracker history ETH/USD --interval 4h --limit 3
+```
+
+```
+TIME (UTC)                OPEN         HIGH          LOW        CLOSE         VOLUME
+2026-10-17 04:00     2,424.15     2,434.70     2,421.89     2,431.40       1,645.13
+2026-10-17 08:00     2,431.41     2,438.00     2,429.85     2,430.77       1,440.66
+2026-10-17 12:00     2,430.77     2,431.77     2,427.84     2,428.50          47.57  (open)
+```
+
+```bash
+# Save up to 720 daily candles per pair to data/daily.csv
+python -m kraken_tracker update --pairs BTC/USD,ETH/USD,SOL/USD
+
+# Chart for the last year from collected data (or omit --from-csv to use the API)
+python -m kraken_tracker plot BTC/USD --from-csv data/daily.csv --days 365 -o btc.png
+```
+
+After `pip install -e .`, the same commands are available as `kraken-tracker <command>`.
 
 ## How it works
 
 ```
-cbr_rates/
-├── client.py    HTTP requests to the CBR API, mirror fallback
-├── parser.py    XML (windows-1251, comma decimals) → typed objects
-├── models.py    Rate / HistoryPoint dataclasses with Decimal values
-├── storage.py   CSV merge keyed by (date, currency)
-├── chart.py     matplotlib chart
+kraken_tracker/
+├── client.py    HTTP requests, retries with backoff, error context
+├── parser.py    JSON → typed objects, API error handling
+├── pairs.py     "btc-usd" → "BTCUSD", supported intervals
+├── models.py    Ticker / Candle dataclasses with Decimal values
+├── storage.py   CSV merge keyed by (pair, time)
+├── chart.py     matplotlib price + volume chart
 └── cli.py       argparse commands
 ```
 
-Design decisions:
+Things the Kraken API does that the code handles:
 
-- **`Decimal`, not `float`.** Money values keep exact precision; `81,5432` stays `81.5432`.
-- **Nominal handling.** Some currencies are quoted per 10 or 100 units. Every rate exposes
-  `unit_rate`, the price of a single unit, so values are comparable.
-- **Date from the response.** On weekends and holidays the CBR returns the rates of the
-  nearest working day. The tool stores the date the bank reports, not the date requested.
-- **Idempotent storage.** Rows are keyed by `(date, code)`. Re-running `update` replaces a
-  row instead of duplicating it, so the scheduled job is safe to retry.
-- **No network in tests.** A fake HTTP session returns recorded-shaped XML, so tests are
-  fast and deterministic, and also cover the fallback and error paths.
+- **Errors come with HTTP 200.** Every response is `{"error": [...], "result": {...}}`, so the
+  error list is checked on every call. Rate-limit errors are retried, others fail fast with the
+  pair name in the message.
+- **Pairs are renamed in responses.** Asking for `BTCUSD` returns data under `XXBTZUSD`,
+  `DOGEUSD` under `XDGUSD`. The parser takes the single pair in the result instead of
+  guessing Kraken's legacy names.
+- **The last candle is still open.** The `last` field marks the newest closed candle. Open
+  candles are flagged, and because storage is keyed by (pair, time), the next run overwrites
+  them with final values.
+- **Prices are strings.** They are parsed into `Decimal`, never `float`, so no precision is lost.
 
 ## Development
 
@@ -83,6 +100,9 @@ pip install -e ".[dev]"
 pytest
 ruff check . && ruff format --check .
 ```
+
+Tests use responses recorded from the real API and a fake HTTP session, which also makes
+it easy to test retries, timeouts and malformed data.
 
 ## License
 
